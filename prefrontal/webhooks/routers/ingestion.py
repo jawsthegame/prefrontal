@@ -55,6 +55,7 @@ from prefrontal.trips import (
     normalize_trip_category,
     process_location,
     suggest_trip_labeling,
+    trip_route,
 )
 from prefrontal.webhooks._common import (
     ACTION_OUTCOME,
@@ -351,26 +352,39 @@ def build_router(services: RouterServices) -> APIRouter:
         a label, i.e. the ones the system is asking you to name — each carries a
         ``suggestion`` (``{place, label, domain, distance_m}`` or ``null``) when one
         of its stops reverse-matches a curated place, so the label form can pre-fill
-        it. ``categories`` is the suggested activity vocabulary; ``domains`` the
-        life-sphere vocabulary (shop/work/home/kids/personal) the focus-balance
-        rollup buckets time-out by — both for the label form.
+        it. Each also carries a ``route`` (``{start, destination, stops}``, each point
+        ``{lat, lon, distance_m, at, place, is_destination}``) — the raw geography of
+        the loop so you can *see where you went* (start, the farthest stop, and any
+        stops in between) and label it even when nothing matched a curated place.
+        ``start`` is ``null`` when the trip opened without a fix and ``destination``
+        is ``null`` when it never dwelt anywhere; the farthest stop is flagged
+        ``is_destination``. ``categories`` is the
+        suggested activity vocabulary; ``domains`` the life-sphere vocabulary
+        (shop/work/home/kids/personal) the focus-balance rollup buckets time-out by —
+        both for the label form.
         """
         memory = ctx.store
-        # Prefetch the curated places + match radius once, not per trip (each
-        # suggestion still reads its own trip's waypoints — those differ per trip).
+        # Prefetch the curated places + match radius once, not per trip.
         places = memory.places()
         radius_m = memory.get_float(
             "place_match_radius_m", DEFAULT_PLACE_MATCH_RADIUS_M
         )
-        unlabeled = [
-            {
-                **trip,
-                "suggestion": suggest_trip_labeling(
-                    memory, trip, places=places, radius_m=radius_m
-                ),
-            }
-            for trip in memory.unlabeled_trips(limit=20)
-        ]
+        unlabeled = []
+        for trip in memory.unlabeled_trips(limit=20):
+            # One waypoint read per trip, shared by the place-match suggestion and
+            # the raw route (start / destination / stops) below.
+            waypoints = memory.trip_waypoints(trip["id"])
+            unlabeled.append(
+                {
+                    **trip,
+                    "suggestion": suggest_trip_labeling(
+                        memory, trip, places=places, radius_m=radius_m, waypoints=waypoints
+                    ),
+                    "route": trip_route(
+                        trip, places=places, radius_m=radius_m, waypoints=waypoints
+                    ),
+                }
+            )
         return {
             "active": memory.active_trip(),
             "recent": memory.recent_trips(limit=20),

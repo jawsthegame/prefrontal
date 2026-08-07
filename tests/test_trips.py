@@ -31,6 +31,7 @@ from prefrontal.trips import (
     record_trip_return,
     suggest_trip_labeling,
     trip_label_prompt,
+    trip_route,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -299,6 +300,54 @@ def test_suggest_trip_labeling_short_circuits_without_stops(store):
     store.close_trip(tid)
     # Passing empty waypoints proves the no-stop early-out needs no places lookup.
     assert suggest_trip_labeling(store, store.get_trip(tid), waypoints=[]) is None
+
+
+# -- trip_route: the raw geography for labeling ------------------------------
+
+
+def test_trip_route_start_stops_and_farthest_destination(store):
+    """start=home, stops in order (place-named where matched), destination=farthest."""
+    store.set_home(*HOME)
+    store.add_place("costco", FARTHER[0], FARTHER[1], label="Costco", domain="shop")
+    tid = store.open_trip(depart_lat=HOME[0], depart_lon=HOME[1], departed_at=_ts(0))
+    store.add_trip_waypoint(tid, FAR[0], FAR[1], 7000, _ts(10))        # unmatched, nearer
+    store.add_trip_waypoint(tid, FARTHER[0], FARTHER[1], 11000, _ts(20))  # Costco, farthest
+    store.close_trip(tid)
+    route = trip_route(
+        store.get_trip(tid), places=store.places(), waypoints=store.trip_waypoints(tid)
+    )
+    assert route["start"] == {
+        "lat": HOME[0], "lon": HOME[1], "distance_m": 0, "at": _ts(0),
+        "place": None, "is_destination": False,
+    }
+    # Chronological stops; only the curated one carries a place name.
+    assert [s["distance_m"] for s in route["stops"]] == [7000, 11000]
+    assert route["stops"][0]["place"] is None
+    assert route["stops"][1]["place"] == "costco"
+    # Exactly the farthest stop is flagged the destination (and is the same object).
+    assert route["stops"][0]["is_destination"] is False
+    assert route["stops"][1]["is_destination"] is True
+    assert route["destination"] is route["stops"][1]
+    assert route["destination"]["distance_m"] == 11000  # farthest, not last-visited
+    assert route["destination"]["place"] == "costco"
+
+
+def test_trip_route_no_stops_has_start_but_no_destination(store):
+    """A quick out-and-back that never dwelt: start present, no stops/destination."""
+    tid = store.open_trip(depart_lat=HOME[0], depart_lon=HOME[1], departed_at=_ts(0))
+    store.close_trip(tid)
+    route = trip_route(store.get_trip(tid), places=store.places(), waypoints=[])
+    assert route["start"]["place"] is None and route["start"]["lat"] == HOME[0]
+    assert route["stops"] == []
+    assert route["destination"] is None
+
+
+def test_trip_route_null_start_when_no_departure_fix(store):
+    """A trip opened without a home fix has a null start (client must not say Home)."""
+    tid = store.open_trip(departed_at=_ts(0))  # no depart_lat/lon
+    store.close_trip(tid)
+    route = trip_route(store.get_trip(tid), places=store.places(), waypoints=[])
+    assert route["start"] is None
 
 
 def test_trip_label_prompt_leads_with_suggestion():
@@ -611,6 +660,23 @@ def test_trips_unlabeled_carries_place_suggestion(client, store):
     row = next(t for t in unlabeled if t["id"] == tid)
     assert row["suggestion"]["label"] == "Costco"
     assert row["suggestion"]["domain"] == "shop"
+
+
+def test_trips_unlabeled_carries_route(client, store):
+    """/trips exposes each unlabeled trip's start/destination/stops for labeling."""
+    store.set_home(*HOME)
+    store.add_place("costco", FAR[0], FAR[1], label="Costco", domain="shop")
+    tid = store.open_trip(depart_lat=HOME[0], depart_lon=HOME[1], departed_at=_ts(0))
+    store.add_trip_waypoint(tid, NEAR[0], NEAR[1], 55, _ts(10))    # unmatched, near
+    store.add_trip_waypoint(tid, FAR[0], FAR[1], 7000, _ts(20))    # Costco, farthest
+    store.close_trip(tid)
+    unlabeled = client.get("/trips", headers=_auth()).json()["unlabeled"]
+    route = next(t for t in unlabeled if t["id"] == tid)["route"]
+    assert route["start"]["lat"] == HOME[0]
+    assert [s["distance_m"] for s in route["stops"]] == [55, 7000]
+    assert route["destination"]["place"] == "costco"
+    # The farthest stop is flagged, not the nearer one.
+    assert [s["is_destination"] for s in route["stops"]] == [False, True]
 
 
 def test_location_endpoint_dormant_without_home(client):

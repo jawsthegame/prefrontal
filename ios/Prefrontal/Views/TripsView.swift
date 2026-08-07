@@ -86,6 +86,9 @@ struct TripsView: View {
                             Chip(text: "looks like \(place)", color: Brand.fyi)
                         }
                     }
+                    if let route = trip.route, route.hasStops {
+                        TripRouteView(route: route)
+                    }
                 }
                 .padding(.vertical, 2)
                 if trip.id != trips.last?.id { Divider().overlay(Brand.line) }
@@ -150,6 +153,44 @@ struct TripsView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         loaded = true
+    }
+}
+
+/// "Where did I go" — a compact `Home → … → destination` route for a trip being
+/// labeled. Each stop shows its curated place name (or distance from home) and is
+/// tappable to open the spot in Maps; the farthest stop (the real destination) is
+/// emphasized. Lets you recognise and name a trip even when no stop matched a
+/// curated place.
+struct TripRouteView: View {
+    let route: TripRoute
+
+    var body: some View {
+        FlowRow(spacing: 6) {
+            // Only lead with a start when the loop opened from a known fix — a nil
+            // start must not be implied as "Home".
+            if let start = route.start {
+                segment(text: start.place?.isEmpty == false ? start.place! : "Home",
+                        url: start.mapURL, emphasized: false)
+            }
+            ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in
+                if index > 0 || route.start != nil {
+                    Image(systemName: "arrow.right").font(.caption2)
+                        .foregroundStyle(Brand.muted).accessibilityHidden(true)
+                }
+                segment(text: stop.label, url: stop.mapURL, emphasized: stop.isDestination == true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func segment(text: String, url: URL?, emphasized: Bool) -> some View {
+        let font = Font.caption.weight(emphasized ? .semibold : .regular)
+        if let url {
+            Link(destination: url) { Text(text).font(font) }
+                .tint(emphasized ? Brand.nearWhite : Brand.accent)
+        } else {
+            Text(text).font(font).foregroundStyle(emphasized ? Brand.nearWhite : Brand.muted)
+        }
     }
 }
 
@@ -267,6 +308,9 @@ struct TripLabelSheet: View {
                     if let place = trip.suggestion?.place, !place.isEmpty {
                         Text("A stop matched your saved place \u{201C}\(place)\u{201D}.")
                     }
+                }
+                if let route = trip.route, route.hasStops {
+                    Section("Where you went") { TripRouteView(route: route) }
                 }
                 Section("How did it go? (optional)") {
                     TextField("A word on how it went — feeds your learning.",
