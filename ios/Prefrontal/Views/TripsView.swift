@@ -175,8 +175,8 @@ struct TripRouteView: View {
                 // Only lead with a start when the loop opened from a known fix — a
                 // nil start must not be implied as "Home".
                 if let start = route.start {
-                    segment(text: start.place?.isEmpty == false ? start.place! : "Home",
-                            url: start.mapURL, emphasized: false)
+                    let startName = start.place.flatMap { $0.isEmpty ? nil : $0 } ?? "Home"
+                    segment(text: startName, url: start.mapURL, emphasized: false)
                 }
                 ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in
                     if index > 0 || route.start != nil {
