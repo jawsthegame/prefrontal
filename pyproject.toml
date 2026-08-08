@@ -64,7 +64,7 @@ qr = [
 # transport reports unavailable and delivery falls back to ntfy. The ES256
 # provider-token signing uses `cryptography`, already a base dependency.
 apns = [
-    "h2>=4.1",
+    "h2>=4.4.1",
 ]
 
 [project.scripts]
