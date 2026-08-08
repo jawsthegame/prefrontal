@@ -42,16 +42,26 @@ struct RootView: View {
         // Cold-launch auto-prompt: `onChange` doesn't fire for the initial phase,
         // so kick the first unlock here (idempotent — `authenticate()` guards).
         .onAppear {
+            reconcileAuthState()
             scheduleUnlockPrompt()
             scheduleCapturePrompt()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active:     scheduleUnlockPrompt(); scheduleCapturePrompt()
+            case .active:     reconcileAuthState(); scheduleUnlockPrompt(); scheduleCapturePrompt()
             case .background: lock.lock(enabled: config.appLockEnabled)
             default:          break
             }
         }
+    }
+
+    /// Recover from a token read that raced a not-yet-readable Keychain at launch
+    /// (a background/pre-unlock process start): re-read the token now that we're
+    /// foregrounded, then drop a walkthrough we're only showing because that first
+    /// read came back empty. Idempotent and cheap — a no-op once state is correct.
+    private func reconcileAuthState() {
+        config.refreshFromStore()
+        onboarding.reconcileConfigured(config.isConfigured)
     }
 
     /// Re-check for a pending capture request a beat after the scene settles. On a

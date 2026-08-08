@@ -181,6 +181,24 @@ final class AppConfig: ObservableObject {
 
     var isConfigured: Bool { !token.isEmpty && URL(string: baseURLString) != nil }
     var baseURL: URL? { URL(string: baseURLString) }
+
+    /// Re-read the token and base URL from shared storage, updating the published
+    /// copies only when they actually changed (so the common no-op path causes no
+    /// `didSet` churn or cache resets).
+    ///
+    /// `init` reads these exactly once. If that read raced a not-yet-readable
+    /// Keychain — the app process spun up in the background while the device was
+    /// still locked (a location event or background push before the first unlock
+    /// after a reboot; the token is stored `AfterFirstUnlock`) — `token` latched
+    /// empty and stayed empty for the life of this long-lived object, stranding a
+    /// logged-in user on the setup flow. Call this when the app foregrounds to pick
+    /// up the now-readable token (paired with `OnboardingModel.reconcileConfigured`).
+    func refreshFromStore() {
+        let freshToken = SharedStore.token
+        if freshToken != token { token = freshToken }
+        let freshURL = SharedStore.baseURL
+        if freshURL != baseURLString { baseURLString = freshURL }
+    }
 }
 // `apply(_ payload: ConnectPayload)` lives in an app-only extension in
 // Onboarding/ConnectPayload.swift — NOT here. This file (Config/) is compiled
