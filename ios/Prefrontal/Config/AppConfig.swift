@@ -32,6 +32,17 @@ enum SharedStore {
         return defaults.string(forKey: "token") ?? ""
     }
 
+    /// The token only when it can actually be read and is non-empty, else `nil` —
+    /// unlike ``token``, which flattens a Keychain read *miss* to `""`. A caller
+    /// that must not mistake a transient read failure for a sign-out
+    /// (``AppConfig/refreshFromStore()``) uses this so it can leave an existing
+    /// token untouched on a miss rather than clearing it.
+    static func readableToken() -> String? {
+        if let t = KeychainStore.token(), !t.isEmpty { return t }
+        let legacy = defaults.string(forKey: "token") ?? ""
+        return legacy.isEmpty ? nil : legacy
+    }
+
     /// One-time move of a pre-#496 token from App Group `UserDefaults` into the
     /// Keychain, then wipe the plaintext copy. Idempotent — safe to call on every
     /// launch. Runs from `AppConfig.init` (the app owns the migration; the widget
@@ -181,6 +192,30 @@ final class AppConfig: ObservableObject {
 
     var isConfigured: Bool { !token.isEmpty && URL(string: baseURLString) != nil }
     var baseURL: URL? { URL(string: baseURLString) }
+
+    /// Re-read the token and base URL from shared storage, updating the published
+    /// copies only when they actually changed (so the common no-op path causes no
+    /// `didSet` churn or cache resets).
+    ///
+    /// `init` reads these exactly once. If that read raced a not-yet-readable
+    /// Keychain — the app process spun up in the background while the device was
+    /// still locked (a location event or background push before the first unlock
+    /// after a reboot; the token is stored `AfterFirstUnlock`) — `token` latched
+    /// empty and stayed empty for the life of this long-lived object, stranding a
+    /// logged-in user on the setup flow. Call this when the app foregrounds to pick
+    /// up the now-readable token (paired with `OnboardingModel.reconcileConfigured`).
+    func refreshFromStore() {
+        // Only adopt a *successfully read, non-empty* token. A nil/empty read is a
+        // Keychain miss — quite possibly the very lock-race this method exists to
+        // recover from — so never assign it: `token`'s `didSet` treats "" as a
+        // sign-out and would delete the item, logging the user out. This path can
+        // therefore only *recover* a token, never clear one.
+        if let fresh = SharedStore.readableToken(), fresh != token {
+            token = fresh
+        }
+        let freshURL = SharedStore.baseURL
+        if freshURL != baseURLString { baseURLString = freshURL }
+    }
 }
 // `apply(_ payload: ConnectPayload)` lives in an app-only extension in
 // Onboarding/ConnectPayload.swift — NOT here. This file (Config/) is compiled

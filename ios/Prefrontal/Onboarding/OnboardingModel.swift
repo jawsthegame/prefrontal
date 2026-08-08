@@ -49,6 +49,20 @@ final class OnboardingModel: ObservableObject {
         incoming = nil
     }
 
+    /// Recover from a bad `isConfigured` read at launch. `active` is latched once in
+    /// `init` from `AppConfig.isConfigured`; if that read raced a not-yet-readable
+    /// Keychain (an app process spun up in the background before the first unlock
+    /// after a reboot), a logged-in user is stranded on the walkthrough. When the
+    /// app foregrounds and we can confirm we're actually configured but are still
+    /// parked at the *welcome* step with no re-onboarding deep link pending, drop
+    /// the walkthrough. A genuine new user isn't configured (so ``configured`` is
+    /// ``false``); a deep-link re-onboard sits at ``.connect`` with an ``incoming``
+    /// payload — neither is disturbed. Never *activates* onboarding, only dismisses.
+    func reconcileConfigured(_ configured: Bool) {
+        guard configured, active, step == .welcome, incoming == nil else { return }
+        finish()
+    }
+
     /// Ask iOS for notification authorization. Prefrontal is iOS-only and
     /// delivers via native APNs push, so granting here is what lets nudges (with
     /// their one-tap action buttons) arrive. Registration for the device token
