@@ -165,21 +165,29 @@ struct TripRouteView: View {
     let route: TripRoute
 
     var body: some View {
-        FlowRow(spacing: 6) {
-            // Only lead with a start when the loop opened from a known fix — a nil
-            // start must not be implied as "Home".
-            if let start = route.start {
-                segment(text: start.place?.isEmpty == false ? start.place! : "Home",
-                        url: start.mapURL, emphasized: false)
-            }
-            ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in
-                if index > 0 || route.start != nil {
-                    Image(systemName: "arrow.right").font(.caption2)
-                        .foregroundStyle(Brand.muted).accessibilityHidden(true)
+        // Wrap the custom `FlowRow` layout in a definite-width container. As a
+        // Form/List row's *direct* content a bare `Layout` gets an ambiguous width
+        // proposal and collapses to nothing — which is why this line was blank in
+        // the Label sheet (a `Form`) while rendering fine on the trip card (already
+        // inside a `VStack`). Mirrors the other in-Form FlowRows (e.g. HouseholdForms).
+        VStack(alignment: .leading, spacing: 0) {
+            FlowRow(spacing: 6) {
+                // Only lead with a start when the loop opened from a known fix — a
+                // nil start must not be implied as "Home".
+                if let start = route.start {
+                    segment(text: start.place?.isEmpty == false ? start.place! : "Home",
+                            url: start.mapURL, emphasized: false)
                 }
-                segment(text: stop.label, url: stop.mapURL, emphasized: stop.isDestination == true)
+                ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in
+                    if index > 0 || route.start != nil {
+                        Image(systemName: "arrow.right").font(.caption2)
+                            .foregroundStyle(Brand.muted).accessibilityHidden(true)
+                    }
+                    segment(text: stop.label, url: stop.mapURL, emphasized: stop.isDestination == true)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
